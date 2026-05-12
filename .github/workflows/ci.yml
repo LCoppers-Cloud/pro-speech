@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  brain-tests:
+    name: ProSpeechBrain · swift test (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Swift 6 toolchain
+        run: |
+          set -euo pipefail
+          SWIFT_VERSION=6.0.3
+          curl -fsSL "https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04.tar.gz" -o /tmp/swift.tar.gz
+          sudo mkdir -p /opt/swift
+          sudo tar xzf /tmp/swift.tar.gz -C /opt/swift --strip-components 1
+          echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
+          # Required runtime libs on Ubuntu 24.04
+          sudo apt-get update -qq
+          sudo apt-get install -y libcurl4 libpython3-stdlib libxml2 libedit2 libsqlite3-0 libz3-4 libtinfo6 binutils
+      - name: Toolchain info
+        run: swift --version
+      - name: Resolve packages
+        run: swift package resolve
+      - name: Build (verbose)
+        run: swift build -v
+      - name: Test
+        run: swift test --parallel
+
+  xcodegen-check:
+    name: XcodeGen spec · validate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select latest Xcode
+        run: |
+          set -e
+          latest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then
+            sudo xcode-select -s "$latest/Contents/Developer"
+          fi
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+      - name: List schemes
+        run: xcodebuild -list -project ProSpeech.xcodeproj
+
+  ios-build:
+    name: iOS app · build (best-effort)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+      - name: Available simulator runtimes
+        run: xcrun simctl list runtimes
+      - name: Build for iOS Simulator
+        run: |
+          set -euo pipefail
+          # iOS 26 SDK may not be present on the runner yet — this job is allowed
+          # to fail so it serves as a signal without blocking PRs.
+          xcodebuild \
+            -project ProSpeech.xcodeproj \
+            -scheme ProSpeech \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build

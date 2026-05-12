@@ -1,0 +1,58 @@
+name: ProSpeech
+options:
+  bundleIdPrefix: cloud.lcoppers
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  ProSpeechBrain:
+    path: .
+
+targets:
+  ProSpeech:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/ProSpeech
+    resources:
+      - path: Resources/Assets.xcassets
+        optional: true
+    dependencies:
+      - package: ProSpeechBrain
+        product: ProSpeechBrain
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: ProSpeech
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen:
+          UIColorName: ""
+        UIRequiredDeviceCapabilities: [armv7]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIBackgroundModes:
+          - audio
+        NSMicrophoneUsageDescription: >-
+          ProSpeech listens to your speech so it can prompt you with the next
+          words to say.
+        NSSpeechRecognitionUsageDescription: >-
+          ProSpeech transcribes your speech on-device to track your pace and
+          align prompts to what you are saying.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cloud.lcoppers.prospeech
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Resources/Info.plist
