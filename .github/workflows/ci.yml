@@ -11,27 +11,27 @@ concurrency:
 
 jobs:
   brain-tests:
-    name: ProSpeechBrain · swift test
-    runs-on: macos-latest
+    name: ProSpeechBrain · swift test (Linux)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Select latest Xcode (need Swift 6 for swift-tools-version:6.0)
+      - name: Install Swift 6 toolchain
         run: |
-          set -e
-          # Pick the newest installed Xcode_*.app so Swift 6 / Swift Testing are available.
-          latest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$latest" ]; then
-            sudo xcode-select -s "$latest/Contents/Developer"
-          fi
-          xcode-select -p
+          set -euo pipefail
+          SWIFT_VERSION=6.0.3
+          curl -fsSL "https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04.tar.gz" -o /tmp/swift.tar.gz
+          sudo mkdir -p /opt/swift
+          sudo tar xzf /tmp/swift.tar.gz -C /opt/swift --strip-components 1
+          echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
+          # Required runtime libs on Ubuntu 24.04
+          sudo apt-get update -qq
+          sudo apt-get install -y libcurl4 libpython3-stdlib libxml2 libedit2 libsqlite3-0 libz3-4 libtinfo6 binutils
       - name: Toolchain info
-        run: |
-          swift --version
-          xcodebuild -version
+        run: swift --version
       - name: Resolve packages
         run: swift package resolve
-      - name: Build
-        run: swift build
+      - name: Build (verbose)
+        run: swift build -v
       - name: Test
         run: swift test --parallel
 
