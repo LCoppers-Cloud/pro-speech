@@ -33,6 +33,6 @@ struct BufferPolicyTests {
 
     @Test func lookaheadMatchesComponents() {
         let policy = BufferPolicy(latencyClaude: 0.4, latencyTTS: 0.1, safetyMargin: 0.2)
-        #expect(policy.lookahead == 0.7)
+        #expect(abs(policy.lookahead - 0.7) < 1e-9)
     }
 }

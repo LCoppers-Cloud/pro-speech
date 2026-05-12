@@ -22,7 +22,7 @@ public enum SyllableCounter {
            !vowels.contains(letters[letters.count - 2]) {
             groups -= 1
         }
-        if letters.suffix(2) == ["l", "e"] && letters.count > 2 {
+        if letters.count > 2 && Array(letters.suffix(2)) == ["l", "e"] {
             groups += 1
         }
         return max(1, groups)

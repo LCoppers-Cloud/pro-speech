@@ -15,6 +15,15 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Select latest Xcode (need Swift 6 for swift-tools-version:6.0)
+        run: |
+          set -e
+          # Pick the newest installed Xcode_*.app so Swift 6 / Swift Testing are available.
+          latest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then
+            sudo xcode-select -s "$latest/Contents/Developer"
+          fi
+          xcode-select -p
       - name: Toolchain info
         run: |
           swift --version
@@ -31,6 +40,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Select latest Xcode
+        run: |
+          set -e
+          latest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then
+            sudo xcode-select -s "$latest/Contents/Developer"
+          fi
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
