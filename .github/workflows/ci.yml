@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  brain-tests:
+    name: ProSpeechBrain · swift test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain info
+        run: |
+          swift --version
+          xcodebuild -version
+      - name: Resolve packages
+        run: swift package resolve
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test --parallel
+
+  xcodegen-check:
+    name: XcodeGen spec · validate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+      - name: List schemes
+        run: xcodebuild -list -project ProSpeech.xcodeproj
+
+  ios-build:
+    name: iOS app · build (best-effort)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+      - name: Available simulator runtimes
+        run: xcrun simctl list runtimes
+      - name: Build for iOS Simulator
+        run: |
+          set -euo pipefail
+          # iOS 26 SDK may not be present on the runner yet — this job is allowed
+          # to fail so it serves as a signal without blocking PRs.
+          xcodebuild \
+            -project ProSpeech.xcodeproj \
+            -scheme ProSpeech \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build
