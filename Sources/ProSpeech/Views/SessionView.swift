@@ -5,18 +5,30 @@ struct SessionView: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             header
             TeleprompterView(
                 words: state.bufferWords,
-                highlightIndex: state.highlightIndex,
-                volatileTail: state.volatileTail
+                highlightIndex: state.highlightIndex
             )
             .frame(maxHeight: .infinity)
+
+            if isRunning {
+                LiveTranscriptCard(
+                    transcript: state.liveTranscript,
+                    volatileTail: state.volatileTail
+                )
+            }
+
             statusBar
             controls
         }
         .padding()
+    }
+
+    private var isRunning: Bool {
+        if case .running = state.phase { return true }
+        return false
     }
 
     private var header: some View {
@@ -33,7 +45,11 @@ struct SessionView: View {
             Text("\(Int(state.liveWPM)) WPM")
             Spacer()
             if !state.statusMessage.isEmpty {
-                Text(state.statusMessage).foregroundStyle(.secondary).font(.caption)
+                Text(state.statusMessage)
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
             }
         }
         .font(.subheadline.monospacedDigit())
@@ -76,21 +92,23 @@ struct SessionView: View {
     }
 }
 
+/// Karaoke-style buffer of words from Claude.
 struct TeleprompterView: View {
     let words: [String]
     let highlightIndex: Int
-    let volatileTail: String
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    flowText
-                    if !volatileTail.isEmpty {
-                        Text(volatileTail)
-                            .foregroundStyle(.secondary)
-                            .italic()
-                            .id("volatile")
+                    if words.isEmpty {
+                        Text("Waiting for Claude…")
+                            .font(.headline)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 40)
+                    } else {
+                        flowText
                     }
                 }
                 .padding()
@@ -105,8 +123,7 @@ struct TeleprompterView: View {
     }
 
     private var flowText: some View {
-        let array = Array(words.enumerated())
-        return WrappingHStack(data: array) { pair in
+        WrappingHStack(data: Array(words.enumerated())) { pair in
             let (i, w) = pair
             Text(w)
                 .font(.system(size: 28, weight: i < highlightIndex ? .regular : .semibold,
@@ -122,9 +139,45 @@ struct TeleprompterView: View {
     }
 }
 
+/// Always-visible live transcript card so the user can see speech-to-text
+/// working as they talk, even before Claude returns its first chunk.
+struct LiveTranscriptCard: View {
+    let transcript: String
+    let volatileTail: String
+
+    var combined: String {
+        if transcript.isEmpty {
+            return volatileTail
+        }
+        if volatileTail.isEmpty {
+            return transcript
+        }
+        return transcript + " " + volatileTail
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "mic.fill")
+                    .foregroundStyle(.tint)
+                Text("You're saying")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(combined.isEmpty ? "Start talking…" : combined)
+                .font(.callout)
+                .foregroundStyle(combined.isEmpty ? .tertiary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(3)
+                .animation(.easeOut(duration: 0.15), value: combined)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.1)))
+    }
+}
+
 /// Minimal flow-layout that wraps children horizontally. iOS 16+.
-struct WrappingHStack<Data: RandomAccessCollection, Content: View>: View
-where Data.Element: Hashable {
+struct WrappingHStack<Data: RandomAccessCollection, Content: View>: View {
     let data: Data
     let content: (Data.Element) -> Content
 
@@ -135,8 +188,8 @@ where Data.Element: Hashable {
 
     var body: some View {
         FlowLayout {
-            ForEach(Array(data), id: \.self) { element in
-                content(element)
+            ForEach(Array(data.enumerated()), id: \.offset) { item in
+                content(item.element)
             }
         }
     }

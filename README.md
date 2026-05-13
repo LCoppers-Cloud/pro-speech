@@ -48,11 +48,25 @@ xcodegen generate
 open ProSpeech.xcodeproj
 ```
 
-The brain logic can also be tested without Xcode:
+### Run on a simulator
 
-```bash
-swift test
-```
+1. In the toolbar scheme selector, pick **ProSpeech** (not `ProSpeechBrain` —
+   that's the brain library; it builds successfully but has nothing to launch).
+2. Pick an iOS 26 iPhone simulator as the destination. If none appears, install
+   the iOS 26 runtime via *Xcode → Settings → Platforms*.
+3. `⌘R` to build and run.
+
+### Run the brain tests
+
+The brain test target is wired into the ProSpeech scheme, so:
+
+- In Xcode, with the **ProSpeech** scheme selected, hit `⌘U`.
+- Or from a terminal: `swift test` runs them outside Xcode (no simulator
+  needed; pure-Swift, runs on macOS or Linux).
+
+The tests cover `RateTracker`, `Aligner`, `BufferPolicy`, `PromptBuffer`,
+and `SyllableCounter`. The audio + UI layer is exercised by running the
+app on a real iOS 26 device with AirPods.
 
 ## Configuration
 

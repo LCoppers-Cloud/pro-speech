@@ -12,6 +12,7 @@ settings:
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
 packages:
   ProSpeechBrain:
@@ -25,7 +26,6 @@ targets:
       - path: Sources/ProSpeech
     resources:
       - path: Resources/Assets.xcassets
-        optional: true
     dependencies:
       - package: ProSpeechBrain
         product: ProSpeechBrain
@@ -56,3 +56,22 @@ targets:
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Resources/Info.plist
+
+schemes:
+  ProSpeech:
+    build:
+      targets:
+        ProSpeech: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - ProSpeechBrainTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
