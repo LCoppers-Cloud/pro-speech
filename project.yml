@@ -12,6 +12,7 @@ settings:
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
 packages:
   ProSpeechBrain:
@@ -25,7 +26,6 @@ targets:
       - path: Sources/ProSpeech
     resources:
       - path: Resources/Assets.xcassets
-        optional: true
     dependencies:
       - package: ProSpeechBrain
         product: ProSpeechBrain

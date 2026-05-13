@@ -4,11 +4,14 @@ import UniformTypeIdentifiers
 struct NotesView: View {
     @EnvironmentObject var state: AppState
     @State private var showImporter = false
+    @FocusState private var notesFocused: Bool
 
     var body: some View {
         NavigationStack {
             VStack {
                 TextEditor(text: $state.notes)
+                    .focused($notesFocused)
+                    .scrollDismissesKeyboard(.interactively)
                     .font(.body.monospaced())
                     .padding(8)
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
@@ -17,6 +20,8 @@ struct NotesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .contentShape(Rectangle())
+            .onTapGesture { notesFocused = false }
             .navigationTitle("Notes")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -28,6 +33,11 @@ struct NotesView: View {
                     Button { showImporter = true } label: {
                         Label("Import", systemImage: "square.and.arrow.down")
                     }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { notesFocused = false }
+                        .bold()
                 }
             }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: [.plainText, .text]) { result in
