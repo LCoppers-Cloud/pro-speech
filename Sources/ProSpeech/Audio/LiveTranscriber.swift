@@ -52,6 +52,8 @@ final class LiveTranscriber {
     /// Used to detect newly finalized tokens between emissions.
     private var lastFinalizedCharCount: Int = 0
     private var lastFinalizedWordCount: Int = 0
+    private var bufferIngestCount: Int = 0
+    private var resultCount: Int = 0
 
     private let log = Logger(subsystem: "cloud.lcoppers.prospeech", category: "LiveTranscriber")
 
@@ -166,6 +168,12 @@ final class LiveTranscriber {
             converted = out
         }
         inputContinuation?.yield(AnalyzerInput(buffer: converted))
+        bufferIngestCount &+= 1
+        if bufferIngestCount == 1 {
+            log.info("first buffer yielded to analyzer")
+        } else if bufferIngestCount % 60 == 0 {
+            log.info("\(self.bufferIngestCount, privacy: .public) buffers yielded to analyzer")
+        }
     }
 
     // MARK: - Result handling

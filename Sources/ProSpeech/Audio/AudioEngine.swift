@@ -38,6 +38,7 @@ final class AudioEngine: @unchecked Sendable {
     nonisolated(unsafe) private(set) var isRunning = false
     nonisolated(unsafe) var isMuted: Bool = false
     nonisolated(unsafe) var onBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
+    nonisolated(unsafe) private var bufferCount: Int = 0
 
     private let log = Logger(subsystem: "cloud.lcoppers.prospeech", category: "AudioEngine")
 
@@ -91,6 +92,12 @@ final class AudioEngine: @unchecked Sendable {
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
             // Render-thread context — no actor hops, no allocations beyond what's needed.
             guard let self else { return }
+            self.bufferCount &+= 1
+            if self.bufferCount == 1 {
+                self.log.info("first mic buffer received (frames=\(buffer.frameLength, privacy: .public))")
+            } else if self.bufferCount % 60 == 0 {
+                self.log.info("\(self.bufferCount, privacy: .public) mic buffers delivered")
+            }
             if self.isMuted { return }
             self.onBuffer?(buffer, time)
         }
@@ -107,6 +114,7 @@ final class AudioEngine: @unchecked Sendable {
 
     func stop() {
         guard isRunning else { return }
+        log.info("stop() called; total buffers delivered=\(self.bufferCount, privacy: .public)")
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRunning = false
