@@ -1,31 +1,70 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
+import os
 
 /// Owns the `AVAudioEngine`, the audio session, and the input-buffer tap.
+///
+/// NOT @MainActor: the buffer-tap callback fires on a render thread, so any
+/// state the callback touches has to be accessible without main-actor
+/// isolation. The properties read from the render thread are marked
+/// `nonisolated(unsafe)` — they're Bool / closure references and Swift's
+/// memory model is enough to make those reads safe in practice.
 ///
 /// Session config: `.playAndRecord` + `.voiceChat` engages the voice-processing
 /// I/O unit, which gives us system-level AEC — critical so the TTS prompt
 /// playing into the AirPods does not get picked up by the AirPods mic and
 /// fed back to the transcriber.
-@MainActor
 final class AudioEngine {
-    enum AudioEngineError: Error {
+    enum AudioEngineError: Error, LocalizedError {
         case sessionConfig(Error)
         case engineStart(Error)
+        case microphonePermissionDenied
+
+        var errorDescription: String? {
+            switch self {
+            case .sessionConfig(let e):
+                return "AVAudioSession config failed: \(e.localizedDescription)"
+            case .engineStart(let e):
+                return "AVAudioEngine.start failed: \(e.localizedDescription)"
+            case .microphonePermissionDenied:
+                return "Microphone permission denied. Enable it in Settings → ProSpeech → Microphone."
+            }
+        }
     }
 
     let engine = AVAudioEngine()
-    private(set) var isRunning = false
 
-    /// Set to true while TTS is speaking. The transcriber should discard buffers
-    /// during this window (AEC is good but not perfect against synthetic voice).
-    var isMuted: Bool = false
+    /// Read from the render thread; written from anywhere.
+    nonisolated(unsafe) private(set) var isRunning = false
+    nonisolated(unsafe) var isMuted: Bool = false
+    nonisolated(unsafe) var onBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
-    /// Closure invoked on the audio thread for each input buffer. Keep it cheap.
-    var onBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
+    private let log = Logger(subsystem: "cloud.lcoppers.prospeech", category: "AudioEngine")
 
     func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
+
+        // Belt-and-suspenders permission probe so we get a clear error instead
+        // of a vpio render-error -1 later.
+        switch session.recordPermission {
+        case .denied:
+            log.error("microphone permission denied")
+            throw AudioEngineError.microphonePermissionDenied
+        case .undetermined:
+            // Ask now, synchronously enough for our purposes (returns on next runloop).
+            var granted = false
+            let sema = DispatchSemaphore(value: 0)
+            session.requestRecordPermission { ok in granted = ok; sema.signal() }
+            _ = sema.wait(timeout: .now() + 5)
+            if !granted {
+                throw AudioEngineError.microphonePermissionDenied
+            }
+        case .granted:
+            break
+        @unknown default:
+            break
+        }
+
         do {
             try session.setCategory(
                 .playAndRecord,
@@ -33,15 +72,19 @@ final class AudioEngine {
                 options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker, .duckOthers]
             )
             try session.setActive(true, options: [.notifyOthersOnDeactivation])
+            log.info("audio session active: sr=\(session.sampleRate, privacy: .public) ch=\(session.inputNumberOfChannels, privacy: .public)")
         } catch {
+            log.error("session config failed: \(error.localizedDescription, privacy: .public)")
             throw AudioEngineError.sessionConfig(error)
         }
 
         // Voice-processing AEC on the input node (iOS 13+).
         do {
             try engine.inputNode.setVoiceProcessingEnabled(true)
+            log.info("voice processing enabled")
         } catch {
             // Not fatal — AEC will be degraded, but the app still works.
+            log.warning("voice processing enable failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -49,8 +92,10 @@ final class AudioEngine {
         guard !isRunning else { return }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
+        log.info("installTap format: \(String(describing: format), privacy: .public)")
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
+            // Render-thread context — no actor hops, no allocations beyond what's needed.
             guard let self else { return }
             if self.isMuted { return }
             self.onBuffer?(buffer, time)
@@ -59,7 +104,9 @@ final class AudioEngine {
         do {
             try engine.start()
             isRunning = true
+            log.info("engine started")
         } catch {
+            log.error("engine start failed: \(error.localizedDescription, privacy: .public)")
             throw AudioEngineError.engineStart(error)
         }
     }
@@ -70,5 +117,6 @@ final class AudioEngine {
         engine.stop()
         isRunning = false
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        log.info("engine stopped")
     }
 }
