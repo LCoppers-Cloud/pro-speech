@@ -30,7 +30,7 @@ final class AudioEngine {
             try session.setCategory(
                 .playAndRecord,
                 mode: .voiceChat,
-                options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker, .duckOthers]
+                options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker, .duckOthers]
             )
             try session.setActive(true, options: [.notifyOthersOnDeactivation])
         } catch {
