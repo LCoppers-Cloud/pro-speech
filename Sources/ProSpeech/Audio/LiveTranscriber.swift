@@ -1,6 +1,7 @@
 @preconcurrency import AVFoundation
 import CoreMedia
 import Foundation
+import os
 @preconcurrency import Speech
 
 /// Thin wrapper around iOS 26 `SpeechAnalyzer` + `SpeechTranscriber` that emits
@@ -52,6 +53,8 @@ final class LiveTranscriber {
     private var lastFinalizedCharCount: Int = 0
     private var lastFinalizedWordCount: Int = 0
 
+    private let log = Logger(subsystem: "cloud.lcoppers.prospeech", category: "LiveTranscriber")
+
     var onEvent: ((WordEvent) -> Void)?
 
     init(locale: Locale = Locale(identifier: "en-US")) {
@@ -59,6 +62,8 @@ final class LiveTranscriber {
     }
 
     func prepare() async throws {
+        log.info("prepare() start, requested locale=\(self.locale.identifier, privacy: .public)")
+
         let transcriber = SpeechTranscriber(
             locale: locale,
             transcriptionOptions: [],
@@ -67,46 +72,37 @@ final class LiveTranscriber {
         )
         self.transcriber = transcriber
 
-        // Compare locales by language+region rather than the raw identifier
-        // string. `Locale(identifier: "en-US").identifier` may be "en_US" or
-        // "en-US" depending on the API path that created it — comparing the
-        // strings directly is brittle.
         let supported = await SpeechTranscriber.supportedLocales
-        let target = (
-            language: locale.language.languageCode?.identifier,
-            region: locale.language.region?.identifier
-        )
-        let isSupported = supported.contains { other in
-            other.language.languageCode?.identifier == target.language &&
-            other.language.region?.identifier == target.region
-        }
-        if !isSupported {
-            throw LiveTranscriberError.unsupportedLocale(
-                locale.identifier,
-                available: supported.map { $0.identifier(.bcp47) }
-            )
-        }
+        log.info("supportedLocales count=\(supported.count, privacy: .public): \(supported.map { $0.identifier(.bcp47) }.joined(separator: ","), privacy: .public)")
 
-        // Install the on-device model for this locale if it's not already
-        // present. assetInstallationRequest returns nil when no install is
-        // needed (model is already there and current).
+        // Install the on-device model. If the locale is genuinely unsupported,
+        // assetInstallationRequest will throw — that's our authoritative check.
+        // No more string-comparison guess.
         do {
             if let downloader = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                log.info("downloading speech model…")
                 try await downloader.downloadAndInstall()
+                log.info("speech model installed")
+            } else {
+                log.info("speech model already installed")
             }
         } catch {
+            log.error("asset install failed: \(error.localizedDescription, privacy: .public)")
             throw LiveTranscriberError.assetUnavailable(underlying: error)
         }
 
         try await AssetInventory.reserve(locale: locale)
+        log.info("locale reserved")
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
 
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+            log.error("no compatible audio format")
             throw LiveTranscriberError.formatUnavailable
         }
         self.analyzerFormat = format
+        log.info("analyzer format: \(String(describing: format), privacy: .public)")
 
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
         self.inputStream = stream
