@@ -1,7 +1,7 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
 import Foundation
-import Speech
+@preconcurrency import Speech
 
 /// Thin wrapper around iOS 26 `SpeechAnalyzer` + `SpeechTranscriber` that emits
 /// a flat stream of (word, end-time, isFinalized) events for the brain.
@@ -97,7 +97,7 @@ final class LiveTranscriber {
         try? await analyzer?.finalizeAndFinishThroughEndOfInput()
         resultsTask?.cancel()
         resultsTask = nil
-        try? await AssetInventory.release(reservedLocale: locale)
+        await AssetInventory.release(reservedLocale: locale)
     }
 
     /// Push one mic buffer in. Called from the audio engine tap.
