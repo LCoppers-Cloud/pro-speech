@@ -81,6 +81,22 @@ public final class ClaudeStream: Sendable {
         public let tokensRemaining: Int?
         public let requestsRemaining: Int?
         public let model: String
+
+        public init(
+            ok: Bool,
+            message: String,
+            httpStatus: Int?,
+            tokensRemaining: Int?,
+            requestsRemaining: Int?,
+            model: String
+        ) {
+            self.ok = ok
+            self.message = message
+            self.httpStatus = httpStatus
+            self.tokensRemaining = tokensRemaining
+            self.requestsRemaining = requestsRemaining
+            self.model = model
+        }
     }
 
     private let config: Config
