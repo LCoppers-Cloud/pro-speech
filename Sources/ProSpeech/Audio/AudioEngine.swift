@@ -14,7 +14,7 @@ import os
 /// I/O unit, which gives us system-level AEC — critical so the TTS prompt
 /// playing into the AirPods does not get picked up by the AirPods mic and
 /// fed back to the transcriber.
-final class AudioEngine {
+final class AudioEngine: @unchecked Sendable {
     enum AudioEngineError: Error, LocalizedError {
         case sessionConfig(Error)
         case engineStart(Error)
