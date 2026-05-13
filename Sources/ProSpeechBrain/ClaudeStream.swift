@@ -47,9 +47,30 @@ public final class ClaudeStream: Sendable {
         }
     }
 
-    public enum StreamError: Error, Sendable {
-        case invalidResponse(Int)
+    public enum StreamError: Error, LocalizedError, Sendable {
+        case invalidResponse(Int, body: String?)
         case decode(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .invalidResponse(let code, let body):
+                let trimmed = body?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let hint: String
+                switch code {
+                case 401: hint = "Invalid API key — check it in Settings."
+                case 403: hint = "API key rejected — likely wrong organization or revoked."
+                case 404: hint = "Model name not found — Settings → About → Model."
+                case 429: hint = "Rate limited — slow down or check Anthropic account credits."
+                case 400: hint = "Bad request to Claude — possibly model name or request shape."
+                case 500..<600: hint = "Anthropic server error — try again in a moment."
+                default: hint = ""
+                }
+                let bodyPart = trimmed.isEmpty ? "" : "\n\(trimmed.prefix(400))"
+                return "Claude HTTP \(code)\(hint.isEmpty ? "" : ": \(hint)")\(bodyPart)"
+            case .decode(let m):
+                return "Claude decode error: \(m)"
+            }
+        }
     }
 
     private let config: Config
@@ -97,11 +118,22 @@ public final class ClaudeStream: Sendable {
                 do {
                     let (bytes, response) = try await session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else {
-                        continuation.finish(throwing: StreamError.invalidResponse(-1))
+                        continuation.finish(throwing: StreamError.invalidResponse(-1, body: "no HTTP response"))
                         return
                     }
                     guard (200..<300).contains(http.statusCode) else {
-                        continuation.finish(throwing: StreamError.invalidResponse(http.statusCode))
+                        // Read body for the error message — Anthropic returns JSON
+                        // with the failure reason in there.
+                        var body = ""
+                        do {
+                            for try await line in bytes.lines {
+                                body += line + "\n"
+                                if body.count > 2000 { break }
+                            }
+                        } catch {
+                            body += "\n(body read error: \(error.localizedDescription))"
+                        }
+                        continuation.finish(throwing: StreamError.invalidResponse(http.statusCode, body: body))
                         return
                     }
                     for try await line in bytes.lines {
