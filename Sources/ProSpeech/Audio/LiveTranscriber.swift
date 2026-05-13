@@ -4,12 +4,6 @@ import Foundation
 import os
 @preconcurrency import Speech
 
-/// Thin wrapper around iOS 26 `SpeechAnalyzer` + `SpeechTranscriber` that emits
-/// a flat stream of (word, end-time, isFinalized) events for the brain.
-///
-/// Volatile (partial) results are re-emitted as they revise; the brain only
-/// updates the rate tracker and aligner from `isFinalized == true` words so
-/// late revisions don't poison the cursor.
 @MainActor
 final class LiveTranscriber {
     struct WordEvent {
@@ -27,7 +21,7 @@ final class LiveTranscriber {
             switch self {
             case .unsupportedLocale(let req, let avail):
                 let shown = avail.prefix(6).joined(separator: ", ")
-                let more = avail.count > 6 ? "\u{2026} (+\(avail.count - 6) more)" : ""
+                let more = avail.count > 6 ? "… (+\(avail.count - 6) more)" : ""
                 return "Locale '\(req)' not supported by SpeechTranscriber. Available: \(shown)\(more)"
             case .assetUnavailable(let e):
                 return "Speech model unavailable: \(e?.localizedDescription ?? "unknown")"
@@ -48,8 +42,6 @@ final class LiveTranscriber {
 
     private var resultsTask: Task<Void, Never>?
 
-    /// Total length (in characters) of the most recent finalized transcript.
-    /// Used to detect newly finalized tokens between emissions.
     private var lastFinalizedCharCount: Int = 0
     private var lastFinalizedWordCount: Int = 0
     private var bufferIngestCount: Int = 0
@@ -77,9 +69,6 @@ final class LiveTranscriber {
         let supported = await SpeechTranscriber.supportedLocales
         log.info("supportedLocales count=\(supported.count, privacy: .public): \(supported.map { $0.identifier(.bcp47) }.joined(separator: ","), privacy: .public)")
 
-        // Install the on-device model. If the locale is genuinely unsupported,
-        // assetInstallationRequest will throw — that's our authoritative check.
-        // No more string-comparison guess.
         do {
             if let downloader = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
                 log.info("downloading speech model…")
@@ -113,6 +102,10 @@ final class LiveTranscriber {
 
     func start() async throws {
         guard let analyzer, let inputStream, let transcriber else { return }
+        bufferIngestCount = 0
+        resultCount = 0
+        lastFinalizedCharCount = 0
+        lastFinalizedWordCount = 0
         resultsTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -124,6 +117,7 @@ final class LiveTranscriber {
             }
         }
         try await analyzer.start(inputSequence: inputStream)
+        log.info("analyzer started")
     }
 
     func finish() async {
@@ -132,9 +126,9 @@ final class LiveTranscriber {
         resultsTask?.cancel()
         resultsTask = nil
         await AssetInventory.release(reservedLocale: locale)
+        log.info("transcriber finished; total buffers=\(self.bufferIngestCount, privacy: .public) results=\(self.resultCount, privacy: .public)")
     }
 
-    /// Push one mic buffer in. Called from the audio engine tap.
     nonisolated func ingest(buffer: AVAudioPCMBuffer) {
         Task { @MainActor in
             await self.ingestOnMain(buffer)
@@ -185,27 +179,22 @@ final class LiveTranscriber {
         if resultCount == 1 || resultCount % 10 == 0 {
             log.info("result #\(self.resultCount, privacy: .public) final=\(result.isFinal, privacy: .public) text=\"\(plain, privacy: .public)\"")
         }
-        // Tokenize on whitespace. Punctuation is stripped by Aligner.normalize
-        // downstream, so leaving it here is harmless.
         let allWords = plain
             .split(whereSeparator: { $0.isWhitespace })
             .map(String.init)
 
         if result.isFinal {
-            // Emit only the suffix that's new vs. previous final.
             let newWords = Array(allWords.dropFirst(lastFinalizedWordCount))
             let baseTime = approximateEndTime(of: result) ?? CFAbsoluteTimeGetCurrent()
             let step = newWords.isEmpty ? 0 : 1.0 / Double(max(1, newWords.count))
             for (i, w) in newWords.enumerated() {
-                let t = baseTime + Double(i) * step * 0.3  // small spread if no per-word time
+                let t = baseTime + Double(i) * step * 0.3
                 let timed = perWordTime(attributed: attributed, wordIndex: lastFinalizedWordCount + i) ?? t
                 onEvent?(.init(text: w, endTime: timed, isFinalized: true))
             }
             lastFinalizedCharCount = plain.count
             lastFinalizedWordCount = allWords.count
         } else {
-            // Volatile preview — useful for UI shadow, but don't feed the brain.
-            // We emit ONE non-final event with the entire tail so the UI can show it.
             let tail = allWords.dropFirst(lastFinalizedWordCount).joined(separator: " ")
             if !tail.isEmpty {
                 onEvent?(.init(text: tail, endTime: CFAbsoluteTimeGetCurrent(), isFinalized: false))
@@ -213,9 +202,6 @@ final class LiveTranscriber {
         }
     }
 
-    /// Look up the per-word `audioTimeRange` attribute on the `AttributedString`.
-    /// Defensive: if the attribute scope key doesn't compile in your SDK, this
-    /// returns nil and we fall back to a coarse synthetic timestamp.
     private func perWordTime(attributed: AttributedString, wordIndex: Int) -> TimeInterval? {
         var idx = 0
         for run in attributed.runs {
@@ -236,30 +222,17 @@ final class LiveTranscriber {
     }
 
     private func approximateEndTime(of result: SpeechTranscriber.Result) -> TimeInterval? {
-        // Last run's audio range, if available.
         let runs = result.text.runs
         guard let last = runs.reversed().first else { return nil }
         guard let r = audioTimeRange(of: last) else { return nil }
         return r.start.seconds + r.duration.seconds
     }
 
-    /// Extract a CMTimeRange from a run via the SpeechTranscriber attribute scope.
-    /// Falls back to nil if the attribute is absent.
     private func audioTimeRange(of run: AttributedString.Runs.Run) -> CMTimeRange? {
-        // The SpeechTranscriber attribute scope exposes audioTimeRange via dynamic
-        // member lookup on Runs.Run. If your SDK exposes it differently, change
-        // the line below to the documented form.
         return run.audioTimeRange
     }
 }
 
-/// Holder for the AVAudioConverter input-block's per-call state.
-///
-/// AVAudioConverter's input block is typed `@Sendable`, but it's actually invoked
-/// synchronously from inside `convert(...)` before that function returns — so
-/// mutable state captured by the block is safe in practice but unprovable to
-/// Swift 6 strict concurrency. Wrapping the state in an `@unchecked Sendable`
-/// class is the standard workaround.
 private final class ConverterInputState: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
     var supplied: Bool = false

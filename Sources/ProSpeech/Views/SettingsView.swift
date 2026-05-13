@@ -30,6 +30,17 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Audio output") {
+                    Picker("Output to", selection: $state.audioRoute) {
+                        ForEach(AudioRoute.allCases) { route in
+                            Text(route.displayName).tag(route)
+                        }
+                    }
+                    Text(routeHelp)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Status") {
                     LabeledContent("Phase", value: phaseDescription)
                     LabeledContent("Live WPM", value: String(format: "%.0f", state.liveWPM))
@@ -45,6 +56,17 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .onAppear { apiKeyDraft = state.apiKey }
+        }
+    }
+
+    private var routeHelp: String {
+        switch state.audioRoute {
+        case .auto:
+            return "If AirPods (or other Bluetooth audio) are connected, the prompt is whispered into them. Otherwise it plays from the iPhone speaker."
+        case .speaker:
+            return "Always play from the iPhone speaker, even if AirPods are connected. Useful when you don't want to wear earbuds."
+        case .bluetooth:
+            return "Only play through Bluetooth audio. If no AirPods are connected, you won't hear anything."
         }
     }
 

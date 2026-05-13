@@ -2,18 +2,26 @@
 import Foundation
 import os
 
+/// User-selectable audio output preference.
+enum AudioRoute: String, CaseIterable, Identifiable, Sendable {
+    case auto       // System chooses; falls back to speaker if no Bluetooth.
+    case speaker    // Force iPhone speaker even if AirPods are connected.
+    case bluetooth  // Prefer connected Bluetooth audio (AirPods etc.).
+
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .auto: return "Automatic"
+        case .speaker: return "iPhone Speaker"
+        case .bluetooth: return "Bluetooth / AirPods"
+        }
+    }
+}
+
 /// Owns the `AVAudioEngine`, the audio session, and the input-buffer tap.
 ///
 /// NOT @MainActor: the buffer-tap callback fires on a render thread, so any
-/// state the callback touches has to be accessible without main-actor
-/// isolation. The properties read from the render thread are marked
-/// `nonisolated(unsafe)` — they're Bool / closure references and Swift's
-/// memory model is enough to make those reads safe in practice.
-///
-/// Session config: `.playAndRecord` + `.voiceChat` engages the voice-processing
-/// I/O unit, which gives us system-level AEC — critical so the TTS prompt
-/// playing into the AirPods does not get picked up by the AirPods mic and
-/// fed back to the transcriber.
+/// state the callback touches must be accessible without main-actor isolation.
 final class AudioEngine: @unchecked Sendable {
     enum AudioEngineError: Error, LocalizedError {
         case sessionConfig(Error)
@@ -34,7 +42,6 @@ final class AudioEngine: @unchecked Sendable {
 
     let engine = AVAudioEngine()
 
-    /// Read from the render thread; written from anywhere.
     nonisolated(unsafe) private(set) var isRunning = false
     nonisolated(unsafe) var isMuted: Bool = false
     nonisolated(unsafe) var onBuffer: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
@@ -42,45 +49,45 @@ final class AudioEngine: @unchecked Sendable {
 
     private let log = Logger(subsystem: "cloud.lcoppers.prospeech", category: "AudioEngine")
 
-    func configureSession() async throws {
+    func configureSession(route: AudioRoute = .auto) async throws {
         let session = AVAudioSession.sharedInstance()
 
-        // Microphone permission probe (iOS 17+ API).
         switch AVAudioApplication.shared.recordPermission {
         case .denied:
             log.error("microphone permission denied")
             throw AudioEngineError.microphonePermissionDenied
         case .undetermined:
             let granted = await AVAudioApplication.requestRecordPermission()
-            if !granted {
-                throw AudioEngineError.microphonePermissionDenied
-            }
+            if !granted { throw AudioEngineError.microphonePermissionDenied }
         case .granted:
             break
         @unknown default:
             break
         }
 
+        // Build category options based on user preference. We use .measurement
+        // mode so SpeechAnalyzer gets clean unprocessed audio. .allowBluetoothA2DP
+        // is enough for OUTPUT routing to AirPods (no mic-on-AirPod here since
+        // voice processing isn't enabled).
+        var options: AVAudioSession.CategoryOptions = [.duckOthers]
+        switch route {
+        case .auto:
+            options.insert(.defaultToSpeaker)
+            options.insert(.allowBluetoothA2DP)
+        case .speaker:
+            options.insert(.defaultToSpeaker)
+        case .bluetooth:
+            options.insert(.allowBluetoothA2DP)
+        }
+
         do {
-            // .measurement mode is Apple's recommendation for speech recognition:
-            // no signal processing, no AGC, no voice-processing AU. We were
-            // using .voiceChat + setVoiceProcessingEnabled to get AEC (so TTS
-            // doesn't bleed back into the mic), but vpio AU was throwing
-            // render err -1 on iOS 26. AEC will be re-introduced as a follow-up
-            // once we confirm the basic loop works.
-            try session.setCategory(
-                .playAndRecord,
-                mode: .measurement,
-                options: [.defaultToSpeaker, .duckOthers]
-            )
+            try session.setCategory(.playAndRecord, mode: .measurement, options: options)
             try session.setActive(true, options: [.notifyOthersOnDeactivation])
-            log.info("audio session active: sr=\(session.sampleRate, privacy: .public) ch=\(session.inputNumberOfChannels, privacy: .public)")
+            log.info("audio session active route=\(route.rawValue, privacy: .public) sr=\(session.sampleRate, privacy: .public) ch=\(session.inputNumberOfChannels, privacy: .public) outputs=\(String(describing: session.currentRoute.outputs.map { $0.portName }), privacy: .public)")
         } catch {
             log.error("session config failed: \(error.localizedDescription, privacy: .public)")
             throw AudioEngineError.sessionConfig(error)
         }
-
-        // Voice processing intentionally NOT enabled — see comment above.
     }
 
     func start() throws {
@@ -89,8 +96,8 @@ final class AudioEngine: @unchecked Sendable {
         let format = input.outputFormat(forBus: 0)
         log.info("installTap format: \(String(describing: format), privacy: .public)")
         input.removeTap(onBus: 0)
+        bufferCount = 0
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
-            // Render-thread context — no actor hops, no allocations beyond what's needed.
             guard let self else { return }
             self.bufferCount &+= 1
             if self.bufferCount == 1 {

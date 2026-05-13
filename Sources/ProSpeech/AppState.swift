@@ -21,6 +21,9 @@ final class AppState: ObservableObject {
     @Published var apiKey: String = "" {
         didSet { if oldValue != apiKey { KeychainStore.set(apiKey, key: "anthropic_api_key") } }
     }
+    @Published var audioRoute: AudioRoute = .auto {
+        didSet { UserDefaults.standard.set(audioRoute.rawValue, forKey: "audioRoute") }
+    }
     @Published var liveTranscript: String = ""
     @Published var volatileTail: String = ""
     @Published var bufferWords: [String] = []
@@ -48,6 +51,10 @@ final class AppState: ObservableObject {
 
     init() {
         apiKey = KeychainStore.get("anthropic_api_key") ?? ""
+        if let raw = UserDefaults.standard.string(forKey: "audioRoute"),
+           let r = AudioRoute(rawValue: raw) {
+            audioRoute = r
+        }
         loadProfile()
         wireCallbacks()
     }
@@ -62,7 +69,7 @@ final class AppState: ObservableObject {
         Task {
             phase = .preparing
             do {
-                try await audio.configureSession()
+                try await audio.configureSession(route: audioRoute)
                 try await transcriber.prepare()
                 phase = .countdown(secondsLeft: 3)
                 for n in stride(from: 3, through: 1, by: -1) {
@@ -96,7 +103,6 @@ final class AppState: ObservableObject {
         try audio.start()
         startKeepalive()
         startSilenceTimer()
-        // Seed an initial chunk so the buffer is not empty when the speaker starts.
         Task { await requestMoreWords(initial: true) }
         phase = .running
     }
@@ -131,7 +137,6 @@ final class AppState: ObservableObject {
 
         tts.onStart = { [weak self] in self?.audio.isMuted = true }
         tts.onFinish = { [weak self] in
-            // Brief tail to let the AEC settle.
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 self?.audio.isMuted = false
@@ -150,6 +155,9 @@ final class AppState: ObservableObject {
 
     private func handleFinalizedWord(_ word: String, endTime: TimeInterval) {
         liveTranscript += (liveTranscript.isEmpty ? "" : " ") + word
+        // Clear the volatile tail once it's been finalized so the UI doesn't
+        // double-show the same word.
+        volatileTail = ""
         rateTracker.observe(word: word, endTime: endTime)
         silence.noteWord(at: endTime)
 
@@ -159,7 +167,6 @@ final class AppState: ObservableObject {
             promptBuffer.advance(to: i)
             highlightIndex = promptBuffer.highlightIndex
         case .offScript:
-            // Discard buffer and regenerate based on the new direction.
             promptBuffer.reset()
             aligner.setBuffer([])
             bufferWords = []
@@ -272,14 +279,13 @@ final class AppState: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "speakerProfile"),
            let decoded = try? JSONDecoder().decode(SpeakerProfile.self, from: data) {
             profile = decoded
-            // Warm-start with persisted mean so the first chunk is sized right.
             liveWPM = profile.meanWPM
         }
     }
 
     private func finalizeProfileFromSession() {
         let est = rateTracker.slowEstimate
-        guard est.wordsPerMinute > 60 else { return }  // didn't actually run long enough
+        guard est.wordsPerMinute > 60 else { return }
         profile.record(
             sessionMeanWPM: est.wordsPerMinute,
             sessionSigmaWPM: max(15, abs(est.wordsPerMinute - profile.meanWPM)),
