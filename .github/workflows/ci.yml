@@ -51,8 +51,16 @@ jobs:
               echo "[build rc=$BUILD_RC]"
               echo
               if [ $BUILD_RC -eq 0 ]; then
-                echo "=== swift test --parallel ==="
-                swift test --parallel
+                echo "=== swift test (sequential, verbose) ==="
+                # --parallel collapses test failures into "error: fatalError";
+                # run sequentially with -v so the actual trapping test is visible.
+                swift test -v --no-parallel 2>&1 || true
+                # Also dump a list of discovered tests for diagnosis.
+                echo
+                echo "=== swift test --list-tests ==="
+                swift test --list-tests 2>&1 || true
+                # Recompute the true test exit code via a clean run.
+                swift test --no-parallel >/dev/null 2>&1
                 TEST_RC=$?
                 echo "[test rc=$TEST_RC]"
               else
