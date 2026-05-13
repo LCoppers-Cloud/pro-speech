@@ -208,3 +208,16 @@ final class LiveTranscriber {
         return run.audioTimeRange
     }
 }
+
+/// Holder for the AVAudioConverter input-block's per-call state.
+///
+/// AVAudioConverter's input block is typed `@Sendable`, but it's actually invoked
+/// synchronously from inside `convert(...)` before that function returns — so
+/// mutable state captured by the block is safe in practice but unprovable to
+/// Swift 6 strict concurrency. Wrapping the state in an `@unchecked Sendable`
+/// class is the standard workaround.
+private final class ConverterInputState: @unchecked Sendable {
+    let buffer: AVAudioPCMBuffer
+    var supplied: Bool = false
+    init(buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+}
