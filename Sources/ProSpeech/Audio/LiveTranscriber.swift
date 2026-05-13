@@ -17,10 +17,23 @@ final class LiveTranscriber {
         let isFinalized: Bool
     }
 
-    enum LiveTranscriberError: Error {
-        case unsupportedLocale
-        case assetUnavailable
+    enum LiveTranscriberError: LocalizedError {
+        case unsupportedLocale(String, available: [String])
+        case assetUnavailable(underlying: Error?)
         case formatUnavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .unsupportedLocale(let req, let avail):
+                let shown = avail.prefix(6).joined(separator: ", ")
+                let more = avail.count > 6 ? "\u{2026} (+\(avail.count - 6) more)" : ""
+                return "Locale '\(req)' not supported by SpeechTranscriber. Available: \(shown)\(more)"
+            case .assetUnavailable(let e):
+                return "Speech model unavailable: \(e?.localizedDescription ?? "unknown")"
+            case .formatUnavailable:
+                return "No compatible audio format for SpeechAnalyzer on this device."
+            }
+        }
     }
 
     private let locale: Locale
@@ -54,14 +67,37 @@ final class LiveTranscriber {
         )
         self.transcriber = transcriber
 
+        // Compare locales by language+region rather than the raw identifier
+        // string. `Locale(identifier: "en-US").identifier` may be "en_US" or
+        // "en-US" depending on the API path that created it — comparing the
+        // strings directly is brittle.
         let supported = await SpeechTranscriber.supportedLocales
-        guard supported.contains(where: { $0.identifier == locale.identifier }) else {
-            throw LiveTranscriberError.unsupportedLocale
+        let target = (
+            language: locale.language.languageCode?.identifier,
+            region: locale.language.region?.identifier
+        )
+        let isSupported = supported.contains { other in
+            other.language.languageCode?.identifier == target.language &&
+            other.language.region?.identifier == target.region
+        }
+        if !isSupported {
+            throw LiveTranscriberError.unsupportedLocale(
+                locale.identifier,
+                available: supported.map { $0.identifier(.bcp47) }
+            )
         }
 
-        if let downloader = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-            try await downloader.downloadAndInstall()
+        // Install the on-device model for this locale if it's not already
+        // present. assetInstallationRequest returns nil when no install is
+        // needed (model is already there and current).
+        do {
+            if let downloader = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                try await downloader.downloadAndInstall()
+            }
+        } catch {
+            throw LiveTranscriberError.assetUnavailable(underlying: error)
         }
+
         try await AssetInventory.reserve(locale: locale)
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
