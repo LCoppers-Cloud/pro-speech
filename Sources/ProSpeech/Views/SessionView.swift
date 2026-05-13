@@ -123,8 +123,7 @@ struct TeleprompterView: View {
 }
 
 /// Minimal flow-layout that wraps children horizontally. iOS 16+.
-struct WrappingHStack<Data: RandomAccessCollection, Content: View>: View
-where Data.Element: Hashable {
+struct WrappingHStack<Data: RandomAccessCollection, Content: View>: View {
     let data: Data
     let content: (Data.Element) -> Content
 
@@ -135,8 +134,8 @@ where Data.Element: Hashable {
 
     var body: some View {
         FlowLayout {
-            ForEach(Array(data), id: \.self) { element in
-                content(element)
+            ForEach(Array(data.enumerated()), id: \.offset) { item in
+                content(item.element)
             }
         }
     }
