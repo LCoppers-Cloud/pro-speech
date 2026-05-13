@@ -30,6 +30,8 @@ final class AppState: ObservableObject {
     @Published var highlightIndex: Int = 0
     @Published var liveWPM: Double = 140
     @Published var statusMessage: String = ""
+    @Published var connectionStatus: ClaudeStream.ConnectionStatus?
+    @Published var connectionTestInProgress: Bool = false
 
     // MARK: - Engine
 
@@ -86,6 +88,29 @@ final class AppState: ObservableObject {
 
     func stop() {
         Task { await stopSession() }
+    }
+
+    /// Validates the user's Anthropic API key + network reachability and
+    /// reads back rate-limit headers. Result lands in `connectionStatus`.
+    func testAnthropicConnection() {
+        guard !apiKey.isEmpty else {
+            connectionStatus = .init(
+                ok: false,
+                message: "Set your Anthropic API key in Settings first.",
+                httpStatus: nil,
+                tokensRemaining: nil,
+                requestsRemaining: nil,
+                model: "claude-haiku-4-5"
+            )
+            return
+        }
+        connectionTestInProgress = true
+        Task {
+            let client = ClaudeStream(config: .init(apiKey: apiKey))
+            let status = await client.testConnection()
+            self.connectionStatus = status
+            self.connectionTestInProgress = false
+        }
     }
 
     private func startSession() async throws {

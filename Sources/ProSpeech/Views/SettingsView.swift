@@ -30,6 +30,45 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Anthropic connection") {
+                    Button {
+                        state.testAnthropicConnection()
+                    } label: {
+                        HStack {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                            Text(state.connectionTestInProgress ? "Testing…" : "Test connection")
+                        }
+                    }
+                    .disabled(state.connectionTestInProgress || state.apiKey.isEmpty)
+
+                    if let s = state.connectionStatus {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: s.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(s.ok ? .green : .orange)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(s.message)
+                                    .font(.caption)
+                                    .multilineTextAlignment(.leading)
+                                if let t = s.tokensRemaining {
+                                    Text("Rate-window tokens remaining: \(t.formatted())")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let r = s.requestsRemaining {
+                                    Text("Rate-window requests remaining: \(r.formatted())")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if s.tokensRemaining != nil || s.requestsRemaining != nil {
+                                    Text("Resets every minute. Anthropic does not expose account balance via API — check the Anthropic Console for credits.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Section("Audio output") {
                     Picker("Output to", selection: $state.audioRoute) {
                         ForEach(AudioRoute.allCases) { route in

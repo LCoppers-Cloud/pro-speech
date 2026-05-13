@@ -59,7 +59,7 @@ public final class ClaudeStream: Sendable {
                 switch code {
                 case 401: hint = "Invalid API key — check it in Settings."
                 case 403: hint = "API key rejected — likely wrong organization or revoked."
-                case 404: hint = "Model name not found — Settings → About → Model."
+                case 404: hint = "Model name not found."
                 case 429: hint = "Rate limited — slow down or check Anthropic account credits."
                 case 400: hint = "Bad request to Claude — possibly model name or request shape."
                 case 500..<600: hint = "Anthropic server error — try again in a moment."
@@ -71,6 +71,16 @@ public final class ClaudeStream: Sendable {
                 return "Claude decode error: \(m)"
             }
         }
+    }
+
+    /// Outcome of a `testConnection()` call.
+    public struct ConnectionStatus: Sendable {
+        public let ok: Bool
+        public let message: String
+        public let httpStatus: Int?
+        public let tokensRemaining: Int?
+        public let requestsRemaining: Int?
+        public let model: String
     }
 
     private let config: Config
@@ -165,6 +175,68 @@ public final class ClaudeStream: Sendable {
             maxTokens: 1
         )
         _ = try await session.data(for: request)
+    }
+
+    /// Fires a 1-token request to validate api key + model + network and
+    /// reads Anthropic's rate-limit headers so the UI can display them.
+    /// Note: Anthropic does not expose an "account balance" endpoint; the
+    /// returned `tokensRemaining` is the *rate-limit window* remaining, which
+    /// resets each minute, not lifetime credits.
+    public func testConnection() async -> ConnectionStatus {
+        var req = URLRequest(url: endpoint)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(config.apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue(config.anthropicVersion, forHTTPHeaderField: "anthropic-version")
+        let body: [String: Any] = [
+            "model": config.model,
+            "max_tokens": 1,
+            "stream": false,
+            "messages": [["role": "user", "content": "."]]
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
+
+        do {
+            let (data, response) = try await session.data(for: req)
+            guard let http = response as? HTTPURLResponse else {
+                return ConnectionStatus(ok: false, message: "No HTTP response",
+                                        httpStatus: nil, tokensRemaining: nil,
+                                        requestsRemaining: nil, model: config.model)
+            }
+            let tokensRem = http.value(forHTTPHeaderField: "anthropic-ratelimit-tokens-remaining").flatMap { Int($0) }
+            let reqRem = http.value(forHTTPHeaderField: "anthropic-ratelimit-requests-remaining").flatMap { Int($0) }
+
+            if (200..<300).contains(http.statusCode) {
+                return ConnectionStatus(
+                    ok: true,
+                    message: "Connected to \(config.model)",
+                    httpStatus: http.statusCode,
+                    tokensRemaining: tokensRem,
+                    requestsRemaining: reqRem,
+                    model: config.model
+                )
+            } else {
+                let bodyString = String(data: data, encoding: .utf8) ?? ""
+                let msg = StreamError.invalidResponse(http.statusCode, body: bodyString).errorDescription ?? "HTTP \(http.statusCode)"
+                return ConnectionStatus(
+                    ok: false,
+                    message: msg,
+                    httpStatus: http.statusCode,
+                    tokensRemaining: tokensRem,
+                    requestsRemaining: reqRem,
+                    model: config.model
+                )
+            }
+        } catch {
+            return ConnectionStatus(
+                ok: false,
+                message: "Network error: \(error.localizedDescription)",
+                httpStatus: nil,
+                tokensRemaining: nil,
+                requestsRemaining: nil,
+                model: config.model
+            )
+        }
     }
 
     // MARK: - Internals
