@@ -1,7 +1,7 @@
 import Foundation
 
 /// Per-speaker stats persisted across sessions.
-public struct SpeakerProfile: Codable, Equatable {
+public struct SpeakerProfile: Codable, Equatable, Sendable {
     public var meanWPM: Double
     public var sigmaWPM: Double
     public var meanSyllablesPerWord: Double

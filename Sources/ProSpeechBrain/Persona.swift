@@ -1,6 +1,6 @@
 import Foundation
 
-public struct Persona: Identifiable, Hashable, Codable {
+public struct Persona: Identifiable, Hashable, Codable, Sendable {
     public let id: String
     public let displayName: String
     public let systemPromptFragment: String
