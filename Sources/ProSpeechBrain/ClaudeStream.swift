@@ -24,8 +24,8 @@ import FoundationNetworking
 /// - `stream(...)` parses SSE incrementally and yields tokens word-at-a-time
 ///   so the consumer can append to the prompt buffer without waiting for the
 ///   model to finish.
-public final class ClaudeStream {
-    public struct Config {
+public final class ClaudeStream: Sendable {
+    public struct Config: Sendable {
         public var apiKey: String
         public var model: String
         public var maxTokens: Int
@@ -47,7 +47,7 @@ public final class ClaudeStream {
         }
     }
 
-    public enum StreamError: Error {
+    public enum StreamError: Error, Sendable {
         case invalidResponse(Int)
         case decode(String)
     }
