@@ -9,31 +9,137 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   brain-tests:
-    name: ProSpeechBrain · swift test (Linux)
+    name: ProSpeechBrain · swift test
     runs-on: ubuntu-24.04
+    container:
+      image: swift:6.0.3
     steps:
       - uses: actions/checkout@v4
-      - name: Install Swift 6 toolchain
+      - name: Run brain build + tests (single capture)
+        id: run
+        continue-on-error: true
+        shell: bash
         run: |
-          set -euo pipefail
-          SWIFT_VERSION=6.0.3
-          curl -fsSL "https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04.tar.gz" -o /tmp/swift.tar.gz
-          sudo mkdir -p /opt/swift
-          sudo tar xzf /tmp/swift.tar.gz -C /opt/swift --strip-components 1
-          echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
-          # Required runtime libs on Ubuntu 24.04
-          sudo apt-get update -qq
-          sudo apt-get install -y libcurl4 libpython3-stdlib libxml2 libedit2 libsqlite3-0 libz3-4 libtinfo6 binutils
-      - name: Toolchain info
-        run: swift --version
-      - name: Resolve packages
-        run: swift package resolve
-      - name: Build (verbose)
-        run: swift build -v
-      - name: Test
-        run: swift test --parallel
+          set +e
+          mkdir -p /tmp/ci
+          {
+            echo "=== swift --version ==="
+            swift --version
+            echo
+            echo "=== uname -a ==="
+            uname -a
+            echo
+            echo "=== pwd / ls ==="
+            pwd
+            ls -la
+            echo
+            echo "=== swift package resolve ==="
+            swift package resolve
+            RESOLVE_RC=$?
+            echo "[resolve rc=$RESOLVE_RC]"
+            echo
+            if [ $RESOLVE_RC -eq 0 ]; then
+              echo "=== swift build -v ==="
+              swift build -v
+              BUILD_RC=$?
+              echo "[build rc=$BUILD_RC]"
+              echo
+              if [ $BUILD_RC -eq 0 ]; then
+                echo "=== swift test --parallel ==="
+                swift test --parallel
+                TEST_RC=$?
+                echo "[test rc=$TEST_RC]"
+              else
+                TEST_RC=2
+                echo "skipped tests (build failed)"
+              fi
+            else
+              BUILD_RC=2
+              TEST_RC=2
+              echo "skipped build (resolve failed)"
+            fi
+            echo
+            echo "=== summary: resolve=$RESOLVE_RC  build=$BUILD_RC  test=$TEST_RC ==="
+            echo "$RESOLVE_RC $BUILD_RC $TEST_RC" > /tmp/ci/exit-codes.txt
+          } 2>&1 | tee /tmp/ci/all.log
+          # Always succeed so the next step posts the log; final step re-checks codes.
+          exit 0
+      - name: Post log to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const read = (p) => {
+              try { return fs.readFileSync(p, 'utf8'); } catch { return ''; }
+            };
+            const log = read('/tmp/ci/all.log');
+            const codes = read('/tmp/ci/exit-codes.txt').trim() || '? ? ?';
+            const tail = (s, n) => s.length > n ? '...(truncated; tail only)\n' + s.slice(-n) : s;
+            const errors = (() => {
+              const lines = log.split('\n');
+              const out = [];
+              for (let i = 0; i < lines.length; i++) {
+                if (/error:|FAILED|Test Suite.*failed|✘|fatal error/i.test(lines[i])) {
+                  const start = Math.max(0, i - 1);
+                  const end = Math.min(lines.length, i + 5);
+                  out.push(lines.slice(start, end).join('\n'));
+                }
+              }
+              return out.join('\n---\n').slice(0, 6000) || '(no error-tagged lines)';
+            })();
+            const body = [
+              '## brain-tests result',
+              '',
+              `**exit codes (resolve build test):** \`${codes}\``,
+              '',
+              '### Errors (grepped from full log)',
+              '```',
+              errors,
+              '```',
+              '',
+              '### Full log · tail',
+              '<details><summary>show last 10k chars</summary>',
+              '',
+              '```',
+              tail(log || '(empty)', 10000),
+              '```',
+              '</details>'
+            ].join('\n');
+            const pr = context.payload.pull_request;
+            if (pr) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body,
+              });
+            }
+      - name: Upload log as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-tests-log
+          path: /tmp/ci/
+          if-no-files-found: ignore
+      - name: Fail job if anything failed
+        shell: bash
+        run: |
+          codes=$(cat /tmp/ci/exit-codes.txt 2>/dev/null || echo "1 1 1")
+          set -- $codes
+          resolve=${1:-1}
+          build=${2:-1}
+          test=${3:-1}
+          echo "exit codes: resolve=$resolve build=$build test=$test"
+          if [ "$resolve" != "0" ] || [ "$build" != "0" ] || [ "$test" != "0" ]; then
+            exit 1
+          fi
 
   xcodegen-check:
     name: XcodeGen spec · validate
@@ -69,8 +175,6 @@ jobs:
       - name: Build for iOS Simulator
         run: |
           set -euo pipefail
-          # iOS 26 SDK may not be present on the runner yet — this job is allowed
-          # to fail so it serves as a signal without blocking PRs.
           xcodebuild \
             -project ProSpeech.xcodeproj \
             -scheme ProSpeech \
