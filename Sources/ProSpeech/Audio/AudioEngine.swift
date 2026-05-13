@@ -41,21 +41,16 @@ final class AudioEngine {
 
     private let log = Logger(subsystem: "cloud.lcoppers.prospeech", category: "AudioEngine")
 
-    func configureSession() throws {
+    func configureSession() async throws {
         let session = AVAudioSession.sharedInstance()
 
-        // Belt-and-suspenders permission probe so we get a clear error instead
-        // of a vpio render-error -1 later.
-        switch session.recordPermission {
+        // Microphone permission probe (iOS 17+ API).
+        switch AVAudioApplication.shared.recordPermission {
         case .denied:
             log.error("microphone permission denied")
             throw AudioEngineError.microphonePermissionDenied
         case .undetermined:
-            // Ask now, synchronously enough for our purposes (returns on next runloop).
-            var granted = false
-            let sema = DispatchSemaphore(value: 0)
-            session.requestRecordPermission { ok in granted = ok; sema.signal() }
-            _ = sema.wait(timeout: .now() + 5)
+            let granted = await AVAudioApplication.requestRecordPermission()
             if !granted {
                 throw AudioEngineError.microphonePermissionDenied
             }

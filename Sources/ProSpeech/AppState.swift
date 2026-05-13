@@ -62,7 +62,7 @@ final class AppState: ObservableObject {
         Task {
             phase = .preparing
             do {
-                try audio.configureSession()
+                try await audio.configureSession()
                 try await transcriber.prepare()
                 phase = .countdown(secondsLeft: 3)
                 for n in stride(from: 3, through: 1, by: -1) {
