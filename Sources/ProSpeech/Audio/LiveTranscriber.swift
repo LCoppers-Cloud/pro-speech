@@ -179,8 +179,12 @@ final class LiveTranscriber {
     // MARK: - Result handling
 
     private func handleResult(_ result: SpeechTranscriber.Result) async {
+        resultCount &+= 1
         let attributed = result.text
         let plain = String(attributed.characters)
+        if resultCount == 1 || resultCount % 10 == 0 {
+            log.info("result #\(self.resultCount, privacy: .public) final=\(result.isFinal, privacy: .public) text=\"\(plain, privacy: .public)\"")
+        }
         // Tokenize on whitespace. Punctuation is stripped by Aligner.normalize
         // downstream, so leaving it here is harmless.
         let allWords = plain
