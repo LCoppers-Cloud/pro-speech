@@ -61,10 +61,16 @@ final class AudioEngine: @unchecked Sendable {
         }
 
         do {
+            // .measurement mode is Apple's recommendation for speech recognition:
+            // no signal processing, no AGC, no voice-processing AU. We were
+            // using .voiceChat + setVoiceProcessingEnabled to get AEC (so TTS
+            // doesn't bleed back into the mic), but vpio AU was throwing
+            // render err -1 on iOS 26. AEC will be re-introduced as a follow-up
+            // once we confirm the basic loop works.
             try session.setCategory(
                 .playAndRecord,
-                mode: .voiceChat,
-                options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker, .duckOthers]
+                mode: .measurement,
+                options: [.defaultToSpeaker, .duckOthers]
             )
             try session.setActive(true, options: [.notifyOthersOnDeactivation])
             log.info("audio session active: sr=\(session.sampleRate, privacy: .public) ch=\(session.inputNumberOfChannels, privacy: .public)")
@@ -73,14 +79,7 @@ final class AudioEngine: @unchecked Sendable {
             throw AudioEngineError.sessionConfig(error)
         }
 
-        // Voice-processing AEC on the input node (iOS 13+).
-        do {
-            try engine.inputNode.setVoiceProcessingEnabled(true)
-            log.info("voice processing enabled")
-        } catch {
-            // Not fatal — AEC will be degraded, but the app still works.
-            log.warning("voice processing enable failed: \(error.localizedDescription, privacy: .public)")
-        }
+        // Voice processing intentionally NOT enabled — see comment above.
     }
 
     func start() throws {
