@@ -123,12 +123,12 @@ final class LiveTranscriber {
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 1024)
             guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
             var error: NSError?
-            var supplied = false
+            let state = ConverterInputState(buffer: buffer)
             converter.convert(to: out, error: &error) { _, status in
-                if supplied { status.pointee = .endOfStream; return nil }
-                supplied = true
+                if state.supplied { status.pointee = .endOfStream; return nil }
+                state.supplied = true
                 status.pointee = .haveData
-                return buffer
+                return state.buffer
             }
             if error != nil { return }
             converted = out
