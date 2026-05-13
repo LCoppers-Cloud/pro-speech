@@ -3,7 +3,16 @@ import Foundation
 import FoundationNetworking
 #endif
 
+#if canImport(Darwin)
+
 /// Streaming client for the Claude Messages API.
+///
+/// Apple-only: this implementation uses `URLSessionConfiguration.waitsForConnectivity`
+/// and `URLSession.bytes(for:)`, neither of which is available in the Linux
+/// `swift-corelibs-foundation` `URLSession`. The brain logic (RateTracker, Aligner,
+/// BufferPolicy, PromptBuffer, SyllableCounter) does not depend on `ClaudeStream`,
+/// so the brain still compiles and tests on Linux for CI; the iOS / macOS app is
+/// the only consumer of streaming.
 ///
 /// Design notes:
 /// - Uses a long-lived `URLSession` so HTTP/2 + TLS are reused across requests.
@@ -186,6 +195,8 @@ public final class ClaudeStream {
         return nil
     }
 }
+
+#endif  // canImport(Darwin)
 
 /// Builds the system prompt by concatenating persona + notes. Notes go after
 /// the persona so the persona's tone framing applies to the notes content.
